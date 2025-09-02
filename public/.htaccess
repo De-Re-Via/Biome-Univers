@@ -1,0 +1,10 @@
+RewriteEngine On
+Options -MultiViews
+
+# --- API: route /api/... vers public/api.php ---
+RewriteRule ^api/(.*)$ api.php?path=$1 [QSA,L]
+
+# --- SPA/front: tout le reste vers index.php (règles existantes) ---
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
