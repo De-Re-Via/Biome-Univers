@@ -1,10 +1,36 @@
+# /htdocs/public/.htaccess
 RewriteEngine On
-Options -MultiViews
 
-# --- API: route /api/... vers public/api.php ---
-RewriteRule ^api/(.*)$ api.php?path=$1 [QSA,L]
+# 1) API en premier : /api/... -> api.php
+#   (doit être AVANT les tests -f / -d, sinon la règle n'est jamais atteinte)
+RewriteRule ^api/(.*)$ api.php [L,QSA]
 
-# --- SPA/front: tout le reste vers index.php (règles existantes) ---
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]
+# 2) Si le fichier ou le dossier existe, on le sert tel quel
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 3) Fallback : on passe par index.php (router de la SPA)
+DirectoryIndex index.php
+RewriteRule ^ index.php [L]
+
+# --- Vidéos & assets ---
+# Types MIME vidéos (lecture HTML5 correcte)
+AddType video/mp4  .mp4
+AddType video/webm .webm
+
+# Caching & Range uniquement si le module est dispo
+<IfModule mod_headers.c>
+  # Autoriser les requêtes partielles (seek dans les vidéos)
+  Header set Accept-Ranges bytes
+
+  # Cache long pour les assets statiques
+  <FilesMatch "\.(?:css|js|png|jpg|jpeg|gif|svg|webp|mp4|webm|woff2?)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Sécurité basique : pas d’accès aux fichiers sensibles (.ht*, .git, .env…)
+<Files ~ "^\.(ht|git|env)">
+  Require all denied
+</Files>

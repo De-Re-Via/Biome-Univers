@@ -1,32 +1,44 @@
 <?php
 declare(strict_types=1);
 
+// En prod, on logge mais on n'affiche pas les erreurs (InfinityFree casse la page sinon)
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+
 session_start();
 if (!isset($_SESSION['csrf'])) {
-  $_SESSION['csrf'] = bin2hex(random_bytes(16));
+    $_SESSION['csrf'] = bin2hex(random_bytes(16));
 }
 $csrf = $_SESSION['csrf'];
 
-// --- Auth locale (adapte si besoin) ---
-$userId = (int)($_SESSION['user']['id'] ?? 0);  // ton auth met déjà $_SESSION['user']
+$config = require __DIR__ . '/config.prod.php';
 
-// --- Token HMAC léger pour l’iFrame ---
-$exp    = time() + 1800;                        // 30 min
-$SECRET = 'change-me-long-secret';              // DOIT matcher biome.php
-$base   = $userId . '|' . $exp;
-$sig    = rtrim(strtr(base64_encode(hash_hmac('sha256', $base, $SECRET, true)), '+/', '-_'), '=');
+// ID utilisateur (fallback = 1)
+$userId = (int)($_SESSION['user']['id'] ?? 1);
 
-// --- URL publique HTTPS de l’API (tunnel en dev) ---
-$API_URL = 'https://laundry-copying-ratio-johns.trycloudflare.com/public/biome.php'; // ex: https://abc123.trycloudflare.com/biome.php
+// Lecture sûre des clés (évite "Undefined array key")
+$secret = $config['SECRET']  ?? '';
+$apiUrl = $config['API_URL'] ?? '/biome.php';
 
-// --- URL du jeu (Netlify) avec paramètres nécessaires ---
+// Jeton court (HMAC HEX)
+$exp  = time() + 1800;                         // 30 min
+$base = $userId . '|' . $exp;
+$sig  = hash_hmac('sha256', $base, $secret);
+
+// URL du jeu (iFrame) avec paramètres
 $gameUrl = 'https://biomeexploreronline.netlify.app/?' . http_build_query([
-  'uid' => $userId,
-  'exp' => $exp,
-  'sig' => $sig,
-  'api' => $API_URL
+    'uid' => $userId,
+    'exp' => $exp,
+    'sig' => $sig,
+    'api' => $apiUrl,
 ]);
+
+// Base href dynamique
+$isProd   = (stripos($_SERVER['HTTP_HOST'] ?? '', 'infinityfree.me') !== false);
+$baseHref = $isProd ? '/public/' : '/biomeUnivers/public/';
 ?>
+
+
 
 
 
@@ -36,6 +48,7 @@ $gameUrl = 'https://biomeexploreronline.netlify.app/?' . http_build_query([
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Biome Univers — Maquette</title>
+  <link rel="icon" href="assets/favicon.ico">
   <!-- CSS principal -->
   <link rel="stylesheet" href="assets/css/style.css" />
 </head>
@@ -93,9 +106,9 @@ $gameUrl = 'https://biomeexploreronline.netlify.app/?' . http_build_query([
               loop
               poster="assets/media/biomeUnivers-poster.png"
               style="width:100%; height:auto; border-radius:12px; display:block">
-              <source src="assets/media/biomeUnivers.mp4" type="video/mp4" />
+              <source src="assets/media/biomeUnivers-c.mp4" type="video/mp4" />
               Votre navigateur ne supporte pas la vidéo HTML5.
-              <a href="assets/media/biomeUnivers.mp4">Télécharger la vidéo</a>.
+              <a href="assets/media/biomeUnivers-c.mp4">Télécharger la vidéo</a>.
             </video>
 
             <!-- Bouton Activer le son -->
@@ -353,5 +366,115 @@ $gameUrl = 'https://biomeexploreronline.netlify.app/?' . http_build_query([
 
   <!-- JS global (gère switch d’onglets, vidéos, modaux, jauges démo) -->
   <script src="assets/js/app.js"></script>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const heroUnivers  = document.getElementById('heroUnivers');
+      const heroExplorer = document.getElementById('heroExplorer');
+      const teaser       = document.getElementById('teaserVideo');
+      const teaserBtn    = document.getElementById('teaserPlay');
+
+      // Active les <source data-src=...> d’une vidéo (déclenche le vrai chargement)
+      function armVideo(video) {
+        if (!video || video.dataset.armed) return;
+        const sources = video.querySelectorAll('source[data-src]');
+        sources.forEach(s => { s.src = s.dataset.src; s.removeAttribute('data-src'); });
+        video.dataset.armed = '1';
+        video.preload = 'auto';
+        video.load();
+      }
+
+      // Joue une vidéo, sinon montre un bouton
+      async function safePlay(video, btn) {
+        if (!video) return;
+        try {
+          await video.play();
+          if (btn) btn.style.display = 'none';
+        } catch {
+          if (btn) btn.style.display = 'grid';
+        }
+      }
+
+      // 1) HERO UNIVERS : priorité maximale
+      if (heroUnivers) {
+        // lancer le hero immédiatement
+        armVideo(heroUnivers);           // (ici ça ne fera rien si ton hero a déjà src)
+        safePlay(heroUnivers);
+
+        // 2) TEASER : on attend que le hero soit prêt OU que le teaser soit visible
+        let teaserArmed = false;
+        function startTeaser() {
+          if (teaserArmed) return;
+          teaserArmed = true;
+          armVideo(teaser);
+          setTimeout(() => safePlay(teaser, teaserBtn), 150); // petit délai pour laisser démarrer le hero
+        }
+
+        // Démarrage après que le hero sait jouer
+        if (heroUnivers.readyState >= 3) {
+          startTeaser();
+        } else {
+          heroUnivers.addEventListener('canplaythrough', startTeaser, { once:true });
+          // filet de sécurité (si l’événement traine)
+          setTimeout(startTeaser, 2000);
+        }
+
+        // Démarrage quand le teaser entre dans le viewport (au cas où)
+        if ('IntersectionObserver' in window && teaser) {
+          const io = new IntersectionObserver((entries) => {
+            if (entries.some(e => e.isIntersecting)) {
+              startTeaser();
+              io.disconnect();
+            }
+          }, { root:null, threshold:0.25 });
+          io.observe(teaser);
+        }
+
+        // Bouton secours si autoplay bloqué
+        if (teaserBtn) {
+          teaserBtn.addEventListener('click', () => safePlay(teaser, teaserBtn));
+        }
+      }
+
+      // 3) HERO EXPLORER : seulement quand on ouvre l’onglet
+      // adapte ces sélecteurs à ton HTML de tabs
+      const tabUnivers  = document.querySelector('[data-tab="univers"]');
+      const tabExplorer = document.querySelector('[data-tab="explorer"]');
+
+      function showUnivers() {
+        if (heroExplorer && !heroExplorer.paused) heroExplorer.pause();
+        if (heroUnivers) safePlay(heroUnivers);
+      }
+      function showExplorer() {
+        if (heroExplorer) { armVideo(heroExplorer); safePlay(heroExplorer); }
+        if (heroUnivers && !heroUnivers.paused) heroUnivers.pause();
+      }
+
+      if (tabUnivers)  tabUnivers .addEventListener('click', showUnivers);
+      if (tabExplorer) tabExplorer.addEventListener('click', showExplorer);
+
+      // 4) Reprise WebAudio/vidéos au premier geste utilisateur (Chrome autoplay)
+      window.addEventListener('pointerdown', () => {
+        try {
+          const ctx = window.game?.sound?.context;
+          if (ctx && ctx.state === 'suspended') ctx.resume();
+        } catch {}
+        if (teaser && teaser.paused) teaser.play().catch(() => {});
+        if (heroUnivers && heroUnivers.paused) heroUnivers.play().catch(() => {});
+      }, { once:true });
+
+      // 5) Si on revient sur l’onglet, relancer au besoin
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (tabExplorer?.classList?.contains('active')) {
+            if (heroExplorer?.paused) heroExplorer.play().catch(() => {});
+          } else {
+            if (heroUnivers?.paused) heroUnivers.play().catch(() => {});
+          }
+        }
+      });
+    });
+  </script>
+
 </body>
 </html>

@@ -1,0 +1,29 @@
+# /htdocs/.htaccess  — racine de l'hébergement
+
+# évite les listings de dossiers et les surprises de MultiViews
+Options -Indexes -MultiViews
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # 1) Laisse passer les vrais fichiers/dossiers tels quels
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # 2) Expose quelques fichiers "racine" servis depuis /public
+  RewriteRule ^(favicon\.ico|robots\.txt|manifest\.json)$ public/$1 [L]
+
+  # 3) Expose les assets directement depuis /public
+  RewriteRule ^(assets/.*|scripts/.*)$ public/$1 [L]
+
+  # 4) Route l'API vers /public/api.php (pour /api/…)
+  RewriteRule ^api(/.*)?$ public/api.php [L,QSA]
+
+  # 5) Expose l'endpoint jeu (optionnel : accès court /biome.php)
+  RewriteRule ^biome\.php$ public/biome.php [L,QSA]
+
+  # 6) Catch-all : tout le reste vers le front /public/index.php
+  RewriteRule ^ public/index.php [L]
+</IfModule>
